@@ -1,0 +1,6 @@
+# 秘密の鍵が入ったファイルは絶対にアップロードしない
+.streamlit/secrets.toml
+
+# その他、Pythonのキャッシュファイルなど（ゴミ）も無視する
+__pycache__/
+*.pyc
