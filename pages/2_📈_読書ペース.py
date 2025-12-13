@@ -90,9 +90,14 @@ st.markdown("---")
 st.subheader('☁️ 読書ワードクラウド')
 st.caption("よく出てくる言葉を大きさで可視化します")
 
-# フォントパスの設定（Windowsの場合）
-# Macの場合は '/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc' などに変更が必要
-font_path = 'C:/Windows/Fonts/msgothic.ttc'
+# フォントパスの設定（プロジェクト内のフォントファイルを使用）
+import os
+font_path = 'ipaexg.ttf' 
+
+# ※もし読み込めない場合のエラーハンドリングを追加しておくと親切です
+if not os.path.exists(font_path):
+    # Windowsで開発中にフォントファイルを入れ忘れた時のフォールバック
+    font_path = 'C:/Windows/Fonts/msgothic.ttc'
 
 # タブで表示内容を切り替え
 tab1, tab2, tab3 = st.tabs(["👤 著者別", "🏷️ カテゴリ別", "📖 タイトル単語"])
