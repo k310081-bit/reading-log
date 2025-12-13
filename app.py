@@ -3,11 +3,48 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import japanize_matplotlib
 import google.generativeai as genai 
+import requests  # ★追加：これを忘れないでください
 
 # --- 設定・関数定義 ---
 
 st.set_page_config(page_title="My Reading Log", layout="wide")
 THEME_COLOR = '#8D6E63' 
+
+@st.cache_data
+def get_book_cover(isbn, title, author):
+    # 1. まずはISBN（978...）があればOpenBDで探す（画質が良く速いため）
+    if isbn and str(isbn).startswith('978'):
+        clean_isbn = str(isbn).replace('-', '').replace(' ', '').split('.')[0]
+        try:
+            url = f"https://api.openbd.jp/v1/get?isbn={clean_isbn}"
+            response = requests.get(url, timeout=1) 
+            json_data = response.json()
+            if json_data and json_data[0] and json_data[0].get('summary', {}).get('cover'):
+                return json_data[0]['summary']['cover']
+        except:
+            pass # 失敗したら次へ
+    
+    # 2. ISBNがない、またはKindle(B0...)の場合は、GoogleBooksで「タイトル」検索
+    try:
+        if not title: return None
+        # 検索精度を上げるため、タイトルの長すぎる副題などはカットして検索
+        # 全角スペースやコロンで区切られた最初の部分だけを使う
+        search_title = str(title).split(':')[0].split('　')[0]
+        
+        url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{search_title}"
+        response = requests.get(url, timeout=1)
+        data = response.json()
+        
+        if 'items' in data and len(data['items']) > 0:
+            vol = data['items'][0].get('volumeInfo', {})
+            links = vol.get('imageLinks', {})
+            return links.get('thumbnail') or links.get('smallThumbnail')
+    except:
+        pass
+        
+    return None
+
+st.set_page_config(page_title="My Reading Log", layout="wide")
 
 # --- メイン処理 ---
 
@@ -15,21 +52,54 @@ st.title('📚 私の読書記録ダッシュボード')
 
 # 1. データの読み込み
 try:
-    df = pd.read_csv('reading_log.csv')
+    # ★修正ポイント：ユーザー様提供の正しい列名リスト
+    col_names = [
+        "サービスID", "アイテムID", "13桁ISBN", "カテゴリ", "評価", 
+        "読書状況", "レビュー", "タグ", "読書メモ(非公開)", "登録日時", 
+        "読了日", "タイトル", "作者名", "出版社名", "発行年", 
+        "タイプ", "ページ数"
+    ]
+
+    # ヘッダーなし(header=None)のCSVとして読み込み、上で定義した列名(names=col_names)を割り当てます
+    df = pd.read_csv(
+        'reading_log.csv', 
+        encoding='cp932', 
+        header=None,       
+        names=col_names,   
+        dtype={'13桁ISBN': str} # ISBN列（3列目）を文字列として読み込む
+    )
+
+    # --- アプリの仕様に合わせて列名を変更 ---
+    # 「13桁ISBN」を「ISBN」に変更
+    if '13桁ISBN' in df.columns:
+        df = df.rename(columns={'13桁ISBN': 'ISBN'})
+    
+    # 「作者名」を「著者」に変更
+    if '作者名' in df.columns:
+        df = df.rename(columns={'作者名': '著者'})
+
+    # ISBNのクリーニング（読み込み時に .0 が付いてしまっていたら消す）
+    if 'ISBN' in df.columns:
+        df['ISBN'] = df['ISBN'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+    # データの整理
     df = df.dropna(subset=['タイトル'])
     df = df[df['タイトル'].astype(str).str.strip() != '']
-    df = df[df['タイトル'].astype(str) != 'nan']
-    df = df[df['タイトル'].astype(str) != 'None']
-    df['読了日'] = pd.to_datetime(df['読了日'])
+    
+    # --- 日付変換 ---
+    # errors='coerce'をつけることで、万が一変なデータがあってもエラーで止まりません
+    df['読了日'] = pd.to_datetime(df['読了日'], errors='coerce')
+    
     df['年'] = df['読了日'].dt.year
     df['月'] = df['読了日'].dt.month
 
-    if '著者' not in df.columns and '作者名' in df.columns:
-        df = df.rename(columns={'作者名': '著者'})
-    
-except FileNotFoundError:
-    st.error('CSVファイルが見つかりません。')
+except UnicodeDecodeError:
+    st.error("文字コードエラー：encoding='utf-8' で試してみてください（cp932を削除）")
     st.stop()
+except Exception as e:
+    st.error(f"予期せぬエラーが発生しました: {e}")
+    st.stop()
+
 
 # --- サイドバー ---
 st.sidebar.header('⚙️ 設定')
@@ -84,14 +154,72 @@ left_column, right_column = st.columns([1.2, 1])
 
 with left_column:
     st.subheader('📖 読書リスト')
-    target_columns = ['読書状況', 'タイトル', '著者', '出版社名', '発行年', 'カテゴリ', '評価', '読了日', 'ページ数']
-    display_cols = [c for c in target_columns if c in df_display.columns]
     
-    if len(display_cols) > 0:
-        st.dataframe(df_display[display_cols], hide_index=True, height=400)
-    else:
-        st.warning("表示できる列がありません")
+    # --- セッションステートの初期化 ---
+    # 「今、何冊まで表示するか」をアプリに覚えさせます
+    if 'display_limit' not in st.session_state:
+        st.session_state.display_limit = 30
+    
+    # フィルタリング機能などで表示件数が変わった時にリセットする処理（オプション）
+    # 念のため、表示対象データが変わったらリセットした方が自然ですが、今回はシンプルにします。
 
+    # データがある場合のみ処理
+    if len(df_display) > 0:
+        # 日付の新しい順に並べ替え
+        df_sorted = df_display.sort_values('読了日', ascending=False)
+        
+        # 現在の「表示上限（display_limit）」までのデータを切り出す
+        current_limit = st.session_state.display_limit
+        df_show = df_sorted.head(current_limit)
+        
+        cols_per_row = 3
+        
+        # グリッド表示のループ処理
+        for i in range(0, len(df_show), cols_per_row):
+            cols = st.columns(cols_per_row)
+            batch = df_show.iloc[i:i+cols_per_row]
+            
+            for col, (_, book) in zip(cols, batch.iterrows()):
+                with col:
+                    with st.container(border=True):
+                        # 関数に ISBN, タイトル, 著者 を渡す
+                        isbn = book.get('ISBN', None)
+                        title = book.get('タイトル', '')
+                        author = book.get('著者', '')
+                        
+                        cover_url = get_book_cover(isbn, title, author)
+                        
+                        # 画像表示
+                        if cover_url:
+                            st.image(cover_url, use_container_width=True)
+                        else:
+                            # 画像がない場合のダミー
+                            st.markdown(
+                                '<div style="background-color:#eee; height:150px; display:flex; align-items:center; justify-content:center; color:#888;">No Image</div>',
+                                unsafe_allow_html=True
+                            )
+                        
+                        # 書籍情報
+                        st.markdown(f"**{title}**")
+                        st.caption(f"{author}")
+                        st.write(f"⭐ {book.get('評価', '-')}")
+                        
+                        with st.expander("詳細"):
+                            st.text(f"カテゴリ: {book.get('カテゴリ', '-')}")
+                            date_str = book['読了日'].strftime('%Y-%m-%d') if pd.notnull(book['読了日']) else '-'
+                            st.text(f"読了日: {date_str}")
+        
+        # --- 「さらに表示」ボタン ---
+        # まだ表示していないデータが残っている場合のみボタンを表示
+        if len(df_display) > current_limit:
+            st.markdown("---")
+            if st.button("👇 さらに30冊を表示"):
+                st.session_state.display_limit += 30
+                st.rerun() # 画面を再読み込みして表示を更新
+                
+    else:
+        st.info("表示する本がありません")
+        
     # --- 🤖 GeminiによるAIレコメンド ---
     st.subheader('🤖 AIコンシェルジュのおすすめ')
     
