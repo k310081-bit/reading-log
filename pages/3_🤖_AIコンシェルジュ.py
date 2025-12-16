@@ -163,3 +163,41 @@ if st.button("✨ この条件でおすすめを聞く", type="primary"):
                 st.error("⚠️ アクセスが集中しています。少し待ってから再度お試しください。")
             else:
                 st.error(f"エラーが発生しました: {e}")
+
+# （...これより上のコードはそのままでOK...）
+
+st.markdown("---")
+st.subheader("🔖 読みたい本リストに追加")
+
+# 入力フォーム（サイドバーではなくメイン画面に配置）
+with st.container(border=True):
+    col_input1, col_input2 = st.columns(2)
+    with col_input1:
+        new_title = st.text_input("タイトル（必須）", placeholder="おすすめされた本のタイトル")
+    with col_input2:
+        new_author = st.text_input("著者名", placeholder="著者名")
+    
+    new_memo = st.text_area("メモ", placeholder="「AIのおすすめ」などのメモや、Amazonリンクなど")
+    
+    if st.button("＋ リストに追加保存"):
+        if new_title:
+            # 保存するためのデータを作成
+            new_data = pd.DataFrame({
+                "タイトル": [new_title],
+                "著者": [new_author],
+                "メモ": [new_memo],
+                "登録日": [datetime.now().strftime('%Y-%m-%d')]
+            })
+            
+            # CSVファイルに「追記モード(mode='a')」で保存
+            csv_path = "wishlist.csv"
+            
+            # ファイルがなければヘッダー付きで新規作成、あればデータだけ追記
+            if not os.path.exists(csv_path):
+                new_data.to_csv(csv_path, index=False)
+            else:
+                new_data.to_csv(csv_path, mode='a', header=False, index=False)
+            
+            st.success(f"『{new_title}』をリストに追加しました！")
+        else:
+            st.error("タイトルは必須です")
