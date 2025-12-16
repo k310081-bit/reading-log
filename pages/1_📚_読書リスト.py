@@ -13,10 +13,14 @@ def get_book_cover(isbn, title, author):
         clean_isbn = str(isbn).replace('-', '').replace(' ', '').split('.')[0]
         try:
             url = f"https://api.openbd.jp/v1/get?isbn={clean_isbn}"
-            response = requests.get(url, timeout=1) 
+            # ★修正1：タイムアウトを3秒に延長
+            response = requests.get(url, timeout=3) 
             json_data = response.json()
             if json_data and json_data[0] and json_data[0].get('summary', {}).get('cover'):
-                return json_data[0]['summary']['cover']
+                cover_url = json_data[0]['summary']['cover']
+                # ★修正2：http を https に強制変換（空文字対策も含む）
+                if cover_url:
+                    return cover_url.replace("http://", "https://")
         except: pass
     
     # 2. GoogleBooks (Title)
@@ -24,14 +28,22 @@ def get_book_cover(isbn, title, author):
         if not title: return None
         search_title = str(title).split(':')[0].split('　')[0]
         url = f"https://www.googleapis.com/books/v1/volumes?q=intitle:{search_title}"
-        response = requests.get(url, timeout=1)
+        # ★修正1：タイムアウトを3秒に延長
+        response = requests.get(url, timeout=3)
         data = response.json()
+        
         if 'items' in data and len(data['items']) > 0:
             vol = data['items'][0].get('volumeInfo', {})
             links = vol.get('imageLinks', {})
-            return links.get('thumbnail') or links.get('smallThumbnail')
+            cover_url = links.get('thumbnail') or links.get('smallThumbnail')
+            
+            # ★修正2：http を https に強制変換
+            if cover_url:
+                return cover_url.replace("http://", "https://")
     except: pass
+    
     return None
+
 
 def get_spine_color():
     colors = [
