@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 import google.generativeai as genai 
 from datetime import datetime, timedelta
 
