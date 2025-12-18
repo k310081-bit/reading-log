@@ -7,3 +7,4 @@ setuptools
 wordcloud
 janome
 feedparser
+st-gsheets-connection
