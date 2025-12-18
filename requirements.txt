@@ -7,4 +7,5 @@ setuptools
 wordcloud
 janome
 feedparser
+google-auth==2.29.0
 st-gsheets-connection
